@@ -4,7 +4,7 @@ import random
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import openai
+#import openai
 import os
 from dotenv import load_dotenv
 import random
@@ -118,8 +118,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация OpenAI
-openai.api_key = OPENAI_API_KEY
+# Инициализация OpenAI#openai.api_key = OPENAI_API_KEY
 
 class BossBot:
     def __init__(self):
@@ -293,22 +292,43 @@ class BossBot:
         return None
     
     async def get_ai_response(self, message: str, user_name: str) -> str:
-        """Получение ответа от ИИ"""
+        """Получение ответа от ИИ через OpenRouter"""
         try:
-            # Добавляем контекст с именем пользователя
+            import requests
+            
             contextualized_message = f"Сотрудник {user_name} пишет: {message}"
             
-            response = openai.ChatCompletion.create(
-                model=AI_MODEL,
-                messages=[
+            headers = {
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/1dadaya/tgBot",
+                "X-Title": "Telegram Boss Bot"
+            }
+            
+            data = {
+                "model": "google/gemma-3n-e4b-it",  # Правильная модель OpenRouter
+                "messages": [
                     {"role": "system", "content": AI_INSTRUCTIONS},
                     {"role": "user", "content": contextualized_message}
                 ],
-                max_tokens=300,
-                temperature=0.8
+                "max_tokens": 300,
+                "temperature": 0.8
+            }
+            
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=30
             )
-            return response.choices[0].message.content.strip()
-        
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                return response_data["choices"][0]["message"]["content"].strip()
+            else:
+                logger.error(f"OpenRouter API error: {response.status_code} - {response.text}")
+                raise Exception("OpenRouter API error")
+            
         except Exception as e:
             logger.error(f"Ошибка ИИ: {e}")
             boss_responses = [
