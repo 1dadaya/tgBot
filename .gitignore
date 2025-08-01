@@ -1,0 +1,28 @@
+# Виртуальное окружение
+bot_env/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Секретные данные (ВАЖНО!)
+.env
+config.py
+
+# IDE файлы
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Системные файлы
+.DS_Store
+Thumbs.db
+
+# Логи
+*.log
+logs/
+
+# Временные файлы
+*.tmp
+*.temp
