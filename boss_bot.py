@@ -4,25 +4,29 @@ import random
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-#import openai
 import os
 from dotenv import load_dotenv
-import random
+import google.generativeai as genai
 
 load_dotenv()
 
 # Токены из переменных окружения
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+GOOGLE_AI_API_KEY = os.getenv('GOOGLE_AI_API_KEY')
 
-# Проверка что токены есть
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_TOKEN не найден в переменных окружения!")
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY не найден в переменных окружения!")
+if not GOOGLE_AI_API_KEY:
+    raise ValueError("GOOGLE_AI_API_KEY не найден в переменных окружения!")
+
+# Настройка Google AI
+genai.configure(api_key=GOOGLE_AI_API_KEY)
+
+# Максимальная длина ответа бота
+MAX_CHARS = 700
 
 # Настройки ИИ
-AI_MODEL = "gpt-3.5-turbo"  # или твоя модель
+AI_MODEL = "gemini-2.0-flash"   # или gemini-1.5-pro
 AI_INSTRUCTIONS = """
 Ты Александр Барашкин, начальник отдела разработки ПО в компании InPizdec. 
 Ты строгий IT-руководитель с чувством юмора, знающий все боли программистов.
@@ -56,11 +60,13 @@ IT-СПЕЦИФИКА:
 - Используй emoji программистские 💻🔧⚡
 - Обращайся к людям по именам из Telegram
 - Используй фразы типа "Так-так-так...", "Что за костыль?", "Где тесты?"
+
+Ограничивайся двумя-тремя короткими абзацами (не более 700 символов).
 """
 
 # Триггерные слова
 GAME_TRIGGERS = [
-    'игра', 'играть', 'поиграть', 'game', 'поле чудес', 
+    'игра', 'играть', 'поиграть', 'game', 'поле чудес',
     'развлечение', 'fun', 'отдых', 'перерыв', 'я устал',
     'казино', 'ставки', 'играем'
 ]
@@ -72,7 +78,7 @@ IT_TRIGGERS = [
 ]
 
 BAD_WORDS = [
-    'дурак', 'идиот', 'плохой', 'ужасный', 'начальник херовый', 
+    'дурак', 'идиот', 'плохой', 'ужасный', 'начальник херовый',
     'барашкин', 'уволить тебя', 'плохой бос', 'говно начальник'
 ]
 
@@ -111,43 +117,41 @@ CODE_PHRASES = [
     "Костыли убрали? 🩼"
 ]
 
-# Настройка логирования
+# Логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Инициализация OpenAI#openai.api_key = OPENAI_API_KEY
-
 class BossBot:
     def __init__(self):
         self.app = Application.builder().token(TELEGRAM_TOKEN).build()
-        self.last_activity = {}  # Отслеживание активности чатов
+        self.last_activity = {}  # активность чатов
+        self.model = genai.GenerativeModel(
+            AI_MODEL,
+            system_instruction=AI_INSTRUCTIONS
+        )
         self.setup_handlers()
-        
+
+    # ---------- вспомогательные функции ----------
+    def post_process(self, text: str, user_name: str) -> str:
+        """Подставляем имя и обрезаем длинные ответы."""
+        text = text.replace("ИМЯ", user_name).replace("{ИМЯ}", user_name)
+        if len(text) > MAX_CHARS:
+            text = text[:MAX_CHARS].rsplit(' ', 1)[0] + "…"
+        return text
+
+    # ---------- хендлеры ----------
     def setup_handlers(self):
-        """Настройка обработчиков"""
-        # Команды
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("help", self.help_command))
         self.app.add_handler(CommandHandler("status", self.status_command))
-        self.app.add_handler(CommandHandler("tests", self.tests_command))  # Новая команда
-        
-        # Обработка всех текстовых сообщений
-        self.app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND, 
-            self.handle_message
-        ))
-        
-        # Обработка игр и стикеров
-        self.app.add_handler(MessageHandler(
-            filters.GAME, 
-            self.handle_games
-        ))
-    
+        self.app.add_handler(CommandHandler("tests", self.tests_command))
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        self.app.add_handler(MessageHandler(filters.GAME, self.handle_games))
+
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда /start"""
         user_name = update.effective_user.first_name or "Сотрудник"
         await update.message.reply_text(
             f"Приветствую, {user_name}! 👔\n\n"
@@ -155,9 +159,8 @@ class BossBot:
             f"Надеюсь на плодотворную работу и качественный код! 💻\n\n"
             f"Помните: тесты — это святое! 🧪"
         )
-    
+
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда /help"""
         help_text = """
 👔 **Александр Барашкин, Начальник отдела разработки**
 Компания: InPizdec 💼
@@ -178,11 +181,8 @@ class BossBot:
 *Помните: я слежу за покрытием тестами! 👀*
         """
         await update.message.reply_text(help_text, parse_mode='Markdown')
-    
+
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Статус отдела"""
-        chat_id = update.effective_chat.id
-        
         status_messages = [
             "📊 Отдел разработки работает в штатном режиме",
             "⚠️ Заметил некоторые нарушения в коде...",
@@ -192,16 +192,14 @@ class BossBot:
             "💻 Билды собираются стабильно",
             "🧪 Тесты в основном зеленые"
         ]
-        
         await update.message.reply_text(
             f"**Статус отдела разработки InPizdec:**\n"
             f"{random.choice(status_messages)}\n\n"
             f"Начальник: Александр Барашкин 👔\n"
             f"Время: {datetime.now().strftime('%H:%M, %d.%m.%Y')}"
         )
-    
+
     async def tests_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда /tests - проверка статуса тестов"""
         test_status = [
             "📊 Покрытие тестами: 73% (надо больше!)",
             "🔴 Unit-тесты падают! Исправляйте!",
@@ -213,42 +211,33 @@ class BossBot:
             "🎯 Покрытие растет, но медленно",
             "🔧 Тесты рефакторятся"
         ]
-        
         await update.message.reply_text(
             f"**Статус тестирования InPizdec:**\n"
             f"{random.choice(test_status)}\n\n"
             f"💻 **Напоминание:** Без тестов в прод не пойдет!\n"
             f"🎯 **Цель:** 100% покрытие к пятнице!"
         )
-    
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка обычных сообщений"""
         try:
             message = update.message.text.lower()
             user_name = update.effective_user.first_name or "Сотрудник"
             chat_id = update.effective_chat.id
-            
-            # Обновляем время последней активности
             self.last_activity[chat_id] = datetime.now()
-            
-            # Проверяем триггеры
+
             response = await self.check_triggers(message, user_name)
-            
             if response:
                 await update.message.reply_text(response)
             else:
-                # Обычный ответ через ИИ
                 ai_response = await self.get_ai_response(message, user_name)
                 await update.message.reply_text(ai_response)
-                
+
         except Exception as e:
             logger.error(f"Ошибка обработки сообщения: {e}")
             await update.message.reply_text("Что-то я не понял... Повторите доклад! 🤔")
-    
+
     async def handle_games(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка игр"""
         user_name = update.effective_user.first_name or "Сотрудник"
-        
         angry_responses = [
             f"{user_name}! А ну прекратили играть! Тесты писать надо! 🧪",
             f"Опять развлечения в рабочее время, {user_name}?! 🎮➡️💻",
@@ -257,13 +246,9 @@ class BossBot:
             f"Игры в рабочее время? {user_name}, может тебе в геймдев уйти? 😡",
             f"Вместо казино лучше unit-тесты писать, {user_name}! 🎰➡️🧪"
         ]
-        
         await update.message.reply_text(random.choice(angry_responses))
-    
+
     async def check_triggers(self, message: str, user_name: str) -> str:
-        """Проверка на триггерные слова"""
-        
-        # Проверка на игровые триггеры
         if any(trigger in message for trigger in GAME_TRIGGERS):
             responses = [
                 f"{user_name}! Хватит играть! Тесты писать надо! 🧪",
@@ -273,83 +258,46 @@ class BossBot:
                 f"Поиграть хочешь? Вот тебе unit-тесты — поиграй с ними! 🎮➡️🧪"
             ]
             return random.choice(responses)
-        
-        # Проверка на IT-триггеры (специальные реакции на код/тесты)
+
         if any(trigger in message for trigger in IT_TRIGGERS):
             if 'тест' in message or 'покрытие' in message:
                 return random.choice(TEST_PHRASES)
             elif 'код' in message or 'баг' in message:
                 return random.choice(CODE_PHRASES)
-        
-        # Проверка на плохие слова
+
         if any(bad_word in message for bad_word in BAD_WORDS):
             return f"{user_name} УВОЛЕН! 🔥 (Но завтра приходи, код сам себя не напишет 😏)"
-        
-        # Проверка на хорошие слова
+
         if any(good_word in message for good_word in GOOD_WORDS):
             return f"{user_name} ПОВЫШЕН! 📈 Теперь ты Senior Developer! 👏"
-        
+
         return None
-    
+
     async def get_ai_response(self, message: str, user_name: str) -> str:
-        """Получение ответа от ИИ через OpenRouter"""
         try:
-            import requests
-            
             contextualized_message = f"Сотрудник {user_name} пишет: {message}"
-            
-            headers = {
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/1dadaya/tgBot",
-                "X-Title": "Telegram Boss Bot"
-            }
-            
-            data = {
-                "model": "google/gemma-3n-e4b-it",  # Правильная модель OpenRouter
-                "messages": [
-                    {"role": "system", "content": AI_INSTRUCTIONS},
-                    {"role": "user", "content": contextualized_message}
-                ],
-                "max_tokens": 300,
-                "temperature": 0.8
-            }
-            
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=data,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                response_data = response.json()
-                return response_data["choices"][0]["message"]["content"].strip()
-            else:
-                logger.error(f"OpenRouter API error: {response.status_code} - {response.text}")
-                raise Exception("OpenRouter API error")
-            
+            response = self.model.generate_content(contextualized_message)
+            return self.post_process(response.text.strip(), user_name)
+
         except Exception as e:
             logger.error(f"Ошибка ИИ: {e}")
-            boss_responses = [
+            fallback = [
                 f"{user_name}, не понял вашего доклада! Повторите четче! 🤔",
                 "Говорите яснее, сотрудник! 🗣️",
                 "Что-то я отвлекся... Повторите еще раз! ☕",
                 f"{user_name}, код работает, а вы — нет? 🤨",
                 "Может билд пересобрать? А то не понимаю ничего! 🔄"
             ]
-            return random.choice(boss_responses)
-    
+            return random.choice(fallback)
+
+    # ---------- фоновые сообщения ----------
     async def random_boss_messages(self):
-        """Случайные сообщения начальника"""
         while True:
             try:
-                await asyncio.sleep(random.randint(1800, 3600))  # 30-60 минут
-                
-                # Проверяем все чаты на бездействие
-                current_time = datetime.now()
+                await asyncio.sleep(random.randint(1800, 3600))  # 30-60 мин
+                now = datetime.now()
                 for chat_id, last_activity in self.last_activity.items():
-                    if current_time - last_activity > timedelta(minutes=30):
+                    if now - last_activity > timedelta(minutes=30):
                         try:
                             await self.app.bot.send_message(
                                 chat_id=chat_id,
@@ -357,29 +305,21 @@ class BossBot:
                             )
                         except Exception as e:
                             logger.error(f"Не удалось отправить сообщение в чат {chat_id}: {e}")
-                            
             except Exception as e:
                 logger.error(f"Ошибка в random_boss_messages: {e}")
-    
+
     async def start_random_messages(self):
-        """Запуск фоновых случайных сообщений"""
         asyncio.create_task(self.random_boss_messages())
-    
+
     async def run_async(self):
-        """Асинхронный запуск бота"""
         logger.info("Александр Барашкин приступает к руководству отделом разработки! 👔💻")
-        
-        # Запускаем случайные сообщения
         asyncio.create_task(self.start_random_messages())
-        
-        # Запускаем polling
         async with self.app:
             await self.app.start()
             await self.app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-            await asyncio.Event().wait()  # Ждем бесконечно
+            await asyncio.Event().wait()
 
     def run(self):
-        """Запуск бота"""
         asyncio.run(self.run_async())
 
 if __name__ == '__main__':
